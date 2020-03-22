@@ -24,16 +24,43 @@ from git import Repo
 
 # pylint: disable=too-few-public-methods, abstract-method
 class GitDirectiveBase(Directive):
+    default_sha_length = 7
+
+    def run(self):
+        self.repo = self._find_repo()
+        self.sha_length = self.options.get('sha_length',
+                                           self.default_sha_length)
+
     def _find_repo(self):
         env = self.state.document.settings.env
         repo_dir = self.options.get('repo-dir', env.srcdir)
         repo = Repo(repo_dir, search_parent_directories=True)
         return repo
 
+    def _commit_node(self, commit):
+        if 'no_github_link' not in self.options:
+            return self._commit_text_node(commit)
+        try:
+            url = self.repo.remotes.origin.url
+            url = url.replace('.git/', '').replace('.git', '')
+            providers = ['github', 'gitlab']
+            if (provider in url for provider in providers):
+                commit_url = url + '/commit/' + commit.hexsha
+                ref = nodes.reference('', commit.hexsha[:self.sha_length],
+                                      refuri=commit_url)
+                par = nodes.paragraph('', '', ref)
+                return par
+            return self._commit_text_node(commit)
+        except AttributeError as error:
+            print("ERROR: ", error)
+            return self._commit_text_node(commit)
+
+    def _commit_text_node(self, commit):
+        return nodes.emphasis(text=commit.hexsha[:self.sha_length])
+
 
 # pylint: disable=too-few-public-methods
 class GitCommitDetail(GitDirectiveBase):
-    default_sha_length = 7
 
     option_spec = {
         'branch': bool,
@@ -46,13 +73,11 @@ class GitCommitDetail(GitDirectiveBase):
 
     # pylint: disable=attribute-defined-outside-init
     def run(self):
-        self.repo = self._find_repo()
+        super(GitCommitDetail, self).run()
         self.branch_name = None
         if not self.repo.head.is_detached:
             self.branch_name = self.repo.head.ref.name
         self.commit = self.repo.commit()
-        self.sha_length = self.options.get('sha_length',
-                                           self.default_sha_length)
         markup = self._build_markup()
         return markup
 
@@ -70,10 +95,7 @@ class GitCommitDetail(GitDirectiveBase):
         if 'commit' in self.options:
             name = nodes.field_name(text="Commit")
             body = nodes.field_body()
-            if 'no_github_link' in self.options:
-                body.append(self._commit_text_node())
-            else:
-                body.append(self._github_link())
+            body.append(self._commit_node(self.commit))
             field = nodes.field()
             field += [name, body]
             field_list.append(field)
@@ -86,25 +108,6 @@ class GitCommitDetail(GitDirectiveBase):
                 text="There were untracked files when this was compiled."
             )))
         return [item]
-
-    def _github_link(self):
-        try:
-            url = self.repo.remotes.origin.url
-            url = url.replace('.git/', '').replace('.git', '')
-            providers = ['github', 'gitlab']
-            if (provider in url for provider in providers):
-                commit_url = url + '/commit/' + self.commit.hexsha
-                ref = nodes.reference('', self.commit.hexsha[:self.sha_length],
-                                      refuri=commit_url)
-                par = nodes.paragraph('', '', ref)
-                return par
-            return self._commit_text_node()
-        except AttributeError as error:
-            print("ERROR: ", error)
-            return self._commit_text_node()
-
-    def _commit_text_node(self):
-        return nodes.emphasis(text=self.commit.hexsha[:self.sha_length])
 
 
 # pylint: disable=too-few-public-methods
@@ -120,9 +123,13 @@ class GitChangelog(GitDirectiveBase):
         'hide_date': bool,
         'hide_details': bool,
         'repo-dir': six.text_type,
+        'sha_length': int,
+        'no_github_link': bool,
+        'commit': bool,
     }
 
     def run(self):
+        super(GitChangelog, self).run()
         if 'rev-list' in self.options and 'revisions' in self.options:
             self.state.document.reporter.warning(
                 'Both rev-list and revisions options given; proceeding using'
@@ -134,8 +141,7 @@ class GitChangelog(GitDirectiveBase):
         return markup
 
     def _commits_to_display(self):
-        repo = self._find_repo()
-        commits = self._filter_commits(repo)
+        commits = self._filter_commits(self.repo)
         return commits
 
     def _filter_commits(self, repo):
@@ -178,6 +184,8 @@ class GitChangelog(GitDirectiveBase):
 
             item = nodes.list_item()
             par = nodes.paragraph()
+            if 'commit' in self.options:
+                par += [self._commit_node(commit), nodes.inline(text=" ")]
             # choose detailed message style by detailed-message-strong option
             if self.options.get('detailed-message-strong', True):
                 par += nodes.strong(text=message)
