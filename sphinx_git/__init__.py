@@ -91,7 +91,8 @@ class GitCommitDetail(GitDirectiveBase):
         try:
             url = self.repo.remotes.origin.url
             url = url.replace('.git/', '').replace('.git', '')
-            if 'github' in url:
+            providers = ['github', 'gitlab']
+            if (provider in url for provider in providers):
                 commit_url = url + '/commit/' + self.commit.hexsha
                 ref = nodes.reference('', self.commit.hexsha[:self.sha_length],
                                       refuri=commit_url)
